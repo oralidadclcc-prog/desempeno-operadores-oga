@@ -1,0 +1,594 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Desempeño operativo OGA</title>
+<style>
+:root{
+  --navy:#1b2a4a; --gold:#b8892b; --rust:#b5532a; --slate:#8e99ab; --blue:#2f4b7c;
+  --ink:#1f2633; --muted:#5b6475; --line:#e3e6ec; --soft:#f5f6f9; --bg:#ffffff; --warn:#fff6e5;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.45 "Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+.topbar{height:10px;background:var(--navy)}
+.wrap{max-width:980px;margin:0 auto;padding:24px 16px 48px}
+.eyebrow{color:var(--muted);font-size:12px;margin:0}
+h1{font-size:26px;margin:6px 0 4px;color:var(--navy)}
+.sub{color:var(--muted);margin:0 0 12px}
+.intro{margin:0 0 18px;color:var(--ink)}
+.meta{display:flex;gap:10px;align-items:center;flex-wrap:wrap;font-size:12px;color:var(--muted);margin-bottom:18px}
+.meta button{font:inherit;border:1px solid var(--line);background:var(--soft);border-radius:6px;padding:5px 10px;cursor:pointer;color:var(--navy)}
+.meta button:hover{border-color:var(--navy)}
+.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;border-top:2px solid var(--gold);padding-top:14px;margin:6px 0 22px}
+.kpi b{display:block;font-size:26px;color:var(--navy);line-height:1.1}
+.kpi span{font-size:12px;color:var(--muted)}
+section{margin:30px 0 10px;page-break-inside:avoid}
+.since{color:var(--gold);font-weight:700;font-size:12px;margin:0 0 4px}
+h2{font-size:21px;margin:0 0 4px;color:var(--navy)}
+h3{font-size:15px;margin:20px 0 2px;color:var(--navy)}
+.note{color:var(--muted);font-size:12.5px;margin:0 0 10px}
+table.heat{width:100%;border-collapse:collapse;font-size:13px}
+table.heat th{font-size:12px;color:var(--muted);font-weight:600;text-align:right;padding:6px 6px;border-bottom:1px solid var(--line)}
+table.heat th:first-child,table.heat td:first-child{text-align:left}
+table.heat td{text-align:right;padding:6px 6px;border-bottom:1px solid var(--line);font-variant-numeric:tabular-nums}
+table.heat tr.team td{font-weight:700;border-top:2px solid var(--navy)}
+table.heat td.tot{font-weight:700}
+.legend{display:flex;flex-wrap:wrap;gap:6px 16px;font-size:12px;color:var(--ink);margin:6px 0 0;justify-content:center}
+.legend i{display:inline-block;width:12px;height:10px;margin-right:6px;vertical-align:middle;border-radius:2px}
+.chart svg{width:100%;height:auto;display:block}
+.cards{display:grid;grid-template-columns:repeat(2,1fr);gap:14px}
+.card{border:1px solid var(--line);border-left:4px solid var(--gold);border-radius:6px;padding:12px 14px}
+.card h4{margin:0 0 4px;font-size:14px;color:var(--navy)}
+.card p{margin:0;font-size:13px}
+.method{font-size:12px;color:var(--muted);border-top:1px solid var(--line);margin-top:22px;padding-top:12px}
+.method p{margin:0 0 6px}
+.warn{background:var(--warn);border:1px solid #ecd39e;border-radius:6px;padding:10px 14px;font-size:13px;margin:0 0 18px}
+.warn ul{margin:4px 0 0 18px;padding:0}
+.loading{padding:60px 0;text-align:center;color:var(--muted)}
+.error{background:#fdecea;border:1px solid #f1b5ad;border-radius:6px;padding:14px;font-size:13px}
+.scroll{overflow-x:auto}
+@media (max-width:700px){.kpis{grid-template-columns:repeat(2,1fr)}.cards{grid-template-columns:1fr}h1{font-size:21px}}
+@media print{.meta button{display:none}.warn{display:none}section{page-break-inside:avoid}.pb{page-break-before:always}}
+</style>
+</head>
+<body>
+<div class="topbar"></div>
+<div class="wrap" id="app"><div class="loading">Cargando datos de las planillas…</div></div>
+
+<script>
+/* =====================================================================
+   CONFIGURACIÓN — lo único que puede hacer falta tocar en el futuro
+   ===================================================================== */
+const CONFIG = {
+  consolidado: {
+    id: "1xvkt00nb6KT93OYEwCYhP67NoI4565ZR_cxIRYFKgbo",
+    gid: 0, hoja: "CONSOLIDADO",
+    url: ""   // opcional; la planilla debe estar compartida como "Cualquier persona con el enlace: lector"
+  },
+  hallazgos: {
+    id: "1nUlxZ_4WYwsRqKxXgRsfUZQeAwpvIpeOKM4nt6-nIeQ",
+    gid: 0, hoja: "Hoja 1",
+    url: ""
+  },
+  inicioPeriodo: "2026-02-01",      // primer mes del cuadro 1
+  inicioHallazgos: "2026-04-13",    // desde cuándo se registran hallazgos
+  incluirMesEnCurso: false,         // false = corta en el último mes completo
+  // Quiénes no se analizan en toma de audiencia
+  noTomanAudiencias: ["Sabrina M.", "Adrián Q.", "Facundo Lu."],
+  // Quiénes son responsables de la agenda
+  responsablesAgenda: ["Facundo Lu.", "Marcos Q.", "Sabrina M.", "Ana D."],
+  // Nombre a mostrar ← variantes que aparecen en las planillas
+  operadores: {
+    "Federico C.": ["federico", "federico c"],
+    "Nicolás M.":  ["nico", "nicolas", "nicolas m"],
+    "Marcos Q.":   ["marcos", "marcos q"],
+    "Solange G.":  ["solange", "solange g"],
+    "Emiliana V.": ["emi", "emiliana", "emiliana v"],
+    "Gabriela Z.": ["gabriela", "gabi", "gabriela z"],
+    "Tomás C.":    ["tomas", "tomas c"],
+    "Ana D.":      ["ana", "ana d", "ana paula"],
+    "Federica R.": ["federica", "federica r"],
+    "Paz R.":      ["paz", "paz r"],
+    "Facundo Ll.": ["facu llit", "facundo llit", "facundo ll", "facu ll", "facundo lliteras"],
+    "Adrián Q.":   ["adrian", "adrian q"],
+    "Facundo Lu.": ["facu luna", "facundo lu", "facundo luna", "facu lu"],
+    "Sabrina M.":  ["sabrina", "sabrina m"]
+  },
+  estadosCelebrada: ["celebrada", "cuarto intermedio", "conciliada", "cont. de agravios", "cont de agravios"],
+  tiposToma: [
+    ["Carga control estadístico",  "#1b2a4a"],
+    ["Devolución de acta",         "#b8892b"],
+    ["Detección de error en acta", "#b5532a"],
+    ["Error en carga acta en SUA", "#2f4b7c"],
+    ["Plataforma Audiunt",         "#8e99ab"]
+  ],
+  tiposAgenda: [
+    ["Licencias",               "#b8892b"],
+    ["Horario y disponibilidad","#b5532a"],
+    ["Calendario vs. SUA",      "#1b2a4a"],
+    ["Otros",                   "#8e99ab"]
+  ]
+};
+
+/* ===================================================================== */
+const MESES = ["ene","feb","mar","abr","may","jun","jul","ago","sep","oct","nov","dic"];
+const MESES_L = ["enero","febrero","marzo","abril","mayo","junio","julio","agosto","septiembre","octubre","noviembre","diciembre"];
+const cap = s => s.charAt(0).toUpperCase() + s.slice(1);
+const norm = s => String(s ?? "").normalize("NFD").replace(/[̀-ͯ]/g,"").toLowerCase().replace(/\./g," ").replace(/\s+/g," ").trim();
+const fmt = (n, d=0) => n.toLocaleString("es-AR", {minimumFractionDigits:d, maximumFractionDigits:d});
+const pct = (a,b) => b ? a/b*100 : 0;
+const yJoin = a => a.length < 2 ? a.join("") : a.slice(0,-1).join(", ") + " y " + a[a.length-1];
+const esc = s => String(s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+
+const ALIAS = {};
+for (const [disp, vs] of Object.entries(CONFIG.operadores)) { ALIAS[norm(disp)] = disp; vs.forEach(v => ALIAS[norm(v)] = disp); }
+const desconocidos = new Set();
+function operador(raw) {
+  const k = norm(raw); if (!k) return "";
+  if (ALIAS[k]) return ALIAS[k];
+  desconocidos.add(String(raw).trim()); return String(raw).trim();
+}
+
+function parseFecha(v) {
+  if (v == null) return null; const s = String(v).trim().toLowerCase(); if (!s) return null;
+  let m;
+  if ((m = s.match(/^date\((\d{4}),(\d{1,2}),(\d{1,2})/))) return new Date(+m[1], +m[2], +m[3]);
+  if ((m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/))) return new Date(+m[1], +m[2]-1, +m[3]);
+  if ((m = s.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})/))) { let y=+m[3]; if (y<100) y+=2000; return new Date(y, +m[2]-1, +m[1]); }
+  if ((m = s.normalize("NFD").replace(/[̀-ͯ]/g,"").match(/^(\d{1,2})[\s\-\/]*(?:de\s+)?([a-z]{3,})\.?[\s\-\/]*(?:de\s+)?(\d{2,4})/))) {
+    const mm = m[2].slice(0,3) === "set" ? 8 : MESES.indexOf(m[2].slice(0,3));
+    if (mm >= 0) { let y=+m[3]; if (y<100) y+=2000; return new Date(y, mm, +m[1]); }
+  }
+  return null;
+}
+
+function parseCSV(text) {
+  const rows = []; let row = [], f = "", q = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (q) { if (c === '"') { if (text[i+1] === '"') { f += '"'; i++; } else q = false; } else f += c; }
+    else if (c === '"') q = true;
+    else if (c === ",") { row.push(f); f = ""; }
+    else if (c === "\n" || c === "\r") { if (c === "\r" && text[i+1] === "\n") i++; row.push(f); rows.push(row); row = []; f = ""; }
+    else f += c;
+  }
+  if (f !== "" || row.length) { row.push(f); rows.push(row); }
+  return rows;
+}
+
+/* Lectura por etiqueta script (JSONP): funciona aunque la página esté abierta como archivo
+   local o insertada en un marco aislado (Looker Studio), donde fetch queda bloqueado. */
+let jsonpN = 0;
+function bajarJsonp(src) {
+  return new Promise((resolve, reject) => {
+    const cb = "__gviz_cb" + (++jsonpN) + "_" + Date.now();
+    const s = document.createElement("script");
+    const fin = () => { delete window[cb]; s.remove(); clearTimeout(t); };
+    const t = setTimeout(() => { fin(); reject(new Error("tiempo de espera agotado")); }, 20000);
+    window[cb] = d => {
+      fin();
+      if (!d || d.status === "error") return reject(new Error((d && d.errors && d.errors[0] && (d.errors[0].detailed_message || d.errors[0].message)) || "respuesta inválida"));
+      const tb = d.table;
+      const header = tb.cols.map(c => c.label || "");
+      const rows = tb.rows.map(r => tb.cols.map((c, i) => {
+        const x = r.c && r.c[i]; if (!x || x.v == null) return "";
+        if (c.type === "date" || c.type === "datetime") return String(x.v);   // "Date(2026,1,5)"
+        if (c.type === "string") return String(x.v);
+        return x.f != null ? String(x.f) : String(x.v);
+      }));
+      resolve([header, ...rows]);
+    };
+    s.onerror = () => { fin(); reject(new Error("la planilla no está compartida como “Cualquier persona con el enlace”")); };
+    s.src = `https://docs.google.com/spreadsheets/d/${src.id}/gviz/tq?tqx=out:json;responseHandler:${cb}&headers=1&sheet=${encodeURIComponent(src.hoja)}&_=${Date.now()}`;
+    document.head.appendChild(s);
+  });
+}
+
+async function bajar(src) {
+  let ultimo;
+  try { return await bajarJsonp(src); } catch (e) { ultimo = e.message; }
+  const urls = [];
+  if (src.url) urls.push(src.url);
+  urls.push(`https://docs.google.com/spreadsheets/d/${src.id}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(src.hoja)}`);
+  urls.push(`https://docs.google.com/spreadsheets/d/${src.id}/pub?gid=${src.gid}&single=true&output=csv`);
+  const primero = ultimo;
+  for (const u of urls) {
+    try {
+      const r = await fetch(u + (u.includes("?") ? "&" : "?") + "_=" + Date.now(), {cache: "no-store"});
+      if (!r.ok) { ultimo = `HTTP ${r.status}`; continue; }
+      const t = await r.text();
+      if (/^\s*<(!doctype|html)/i.test(t)) { ultimo = "la planilla no está publicada ni compartida"; continue; }
+      return parseCSV(t);
+    } catch (e) { ultimo = e.message; }
+  }
+  throw new Error(`No se pudo leer "${src.hoja}" (${primero}; ${ultimo}).`);
+}
+
+function col(header, ...nombres) {
+  const h = header.map(norm);
+  for (const n of nombres) { const i = h.indexOf(norm(n)); if (i >= 0) return i; }
+  for (const n of nombres) { const i = h.findIndex(x => x.startsWith(norm(n))); if (i >= 0) return i; }
+  return -1;
+}
+
+/* ===================================================================== */
+async function cargar() {
+  const app = document.getElementById("app");
+  app.innerHTML = '<div class="loading">Cargando datos de las planillas…</div>';
+  desconocidos.clear();
+  try {
+    const [cRows, hRows] = await Promise.all([bajar(CONFIG.consolidado), bajar(CONFIG.hallazgos)]);
+    render(app, procesar(cRows, hRows));
+  } catch (e) {
+    app.innerHTML = `<div class="error"><b>No se pudieron cargar los datos.</b><br>${esc(e.message)}<br><br>
+      Revisá que cada planilla esté publicada en la web (Archivo → Compartir → Publicar en la web) o compartida como “Cualquier persona con el enlace: lector”.</div>`;
+  }
+}
+
+function procesar(cRows, hRows) {
+  const avisos = [];
+  // ---------- período
+  const hoy = new Date();
+  const fin = CONFIG.incluirMesEnCurso ? new Date(hoy.getFullYear(), hoy.getMonth(), hoy.getDate())
+                                       : new Date(hoy.getFullYear(), hoy.getMonth(), 0);
+  const ini = parseFecha(CONFIG.inicioPeriodo), iniH = parseFecha(CONFIG.inicioHallazgos);
+  const meses = []; for (let d = new Date(ini.getFullYear(), ini.getMonth(), 1); d <= fin; d.setMonth(d.getMonth()+1)) meses.push(d.getFullYear()*12 + d.getMonth());
+  const mk = d => d.getFullYear()*12 + d.getMonth();
+  const enPeriodo = d => d && d >= ini && d <= fin;
+  const desdeH = d => d && d >= iniH && d <= fin;
+
+  // ---------- consolidado
+  const cH = cRows[0] || [];
+  const iF = col(cH, "fecha"), iE = col(cH, "estado"), iO = col(cH, "operador/a", "operador");
+  if (iF < 0 || iE < 0 || iO < 0) throw new Error("No encuentro las columnas FECHA, ESTADO y OPERADOR/A en CONSOLIDADO.");
+  const CEL = new Set(CONFIG.estadosCelebrada.map(norm));
+  const aud = []; let sinFecha = 0;
+  for (const r of cRows.slice(1)) {
+    if (!r.some(x => String(x).trim())) continue;
+    const f = parseFecha(r[iF]);
+    if (!f) { if (String(r[iE]||"").trim()) sinFecha++; continue; }
+    aud.push({f, m: mk(f), cel: CEL.has(norm(r[iE])), op: operador(r[iO])});
+  }
+  if (sinFecha) avisos.push(`${sinFecha} filas de CONSOLIDADO con fecha ilegible quedaron afuera.`);
+
+  // ---------- hallazgos
+  const hH = hRows[0] || [];
+  const jF = col(hH, "fecha deteccion", "fecha"), jT = col(hH, "tipo de hallazgo"), jH = col(hH, "hallazgo"),
+        jO = col(hH, "operador"), jA = col(hH, "tipo de agenda");
+  if ([jF,jT,jH,jO].some(x => x < 0)) throw new Error("No encuentro las columnas del registro de hallazgos (Fecha detección, Tipo de hallazgo, Hallazgo, Operador).");
+  if (jA < 0) avisos.push("No encuentro la columna “Tipo de agenda” en el registro de hallazgos.");
+  const TOMA = new Map(CONFIG.tiposToma.map(([t]) => [norm(t), t]));
+  const TAG = new Map(CONFIG.tiposAgenda.map(([t]) => [norm(t), t]));
+  const nc = [];
+  for (const r of hRows.slice(1)) {
+    if (norm(r[jT]) !== "no conformidad") continue;
+    const f = parseFecha(r[jF]); if (!desdeH(f)) continue;
+    const h = norm(r[jH]);
+    const area = TOMA.has(h) ? "toma" : h === "agenda" ? "agenda" : h === "mesa de entrada" ? "mesa" : null;
+    if (!area) continue;
+    nc.push({f, m: mk(f), area, tipo: area === "toma" ? TOMA.get(h) : area === "agenda" ? (TAG.get(norm(jA >= 0 ? r[jA] : "")) || "Sin clasificar") : "", op: operador(r[jO])});
+  }
+
+  // ---------- 1. celebradas por operador y mes
+  const NO = new Set(CONFIG.noTomanAudiencias);
+  const cel = aud.filter(a => a.cel && enPeriodo(a.f));
+  const actividad = {}; // meses con cualquier registro, por operador
+  for (const a of aud) if (enPeriodo(a.f) && a.op) (actividad[a.op] ||= new Set()).add(a.m);
+  const ops = {};
+  for (const a of cel) {
+    if (!a.op || NO.has(a.op)) continue;
+    const o = ops[a.op] ||= {op: a.op, mes: {}, total: 0};
+    o.mes[a.m] = (o.mes[a.m]||0) + 1; o.total++;
+  }
+  const lista = Object.values(ops).map(o => {
+    const act = [...(actividad[o.op]||[])].sort((a,b)=>a-b);
+    o.primero = act[0]; o.ultimo = act[act.length-1];
+    o.activos = meses.filter(m => m >= o.primero && m <= o.ultimo);
+    o.prom = o.total / o.activos.length;
+    o.baja = o.ultimo < meses[meses.length-1];
+    o.alta = o.primero > meses[0];
+    return o;
+  }).sort((a,b) => b.total - a.total);
+  const equipoMes = Object.fromEntries(meses.map(m => [m, lista.reduce((s,o)=>s+(o.mes[m]||0),0)]));
+  const totalPeriodo = lista.reduce((s,o)=>s+o.total,0);
+
+  // ---------- 2. toma de audiencia
+  const celH = aud.filter(a => a.cel && desdeH(a.f));
+  const celHop = {}; celH.forEach(a => { if (a.op) celHop[a.op] = (celHop[a.op]||0)+1; });
+  const ncToma = nc.filter(n => n.area === "toma" && n.op && !NO.has(n.op));
+  const toma = lista.filter(o => celHop[o.op]).map(o => {
+    const mis = ncToma.filter(n => n.op === o.op);
+    const porTipo = Object.fromEntries(CONFIG.tiposToma.map(([t]) => [t, mis.filter(n=>n.tipo===t).length]));
+    return {op: o.op, cel: celHop[o.op], nc: mis.length, porTipo, tasa: pct(mis.length, celHop[o.op])};
+  }).sort((a,b) => b.tasa - a.tasa);
+  const tomaCel = toma.reduce((s,t)=>s+t.cel,0), tomaNC = toma.reduce((s,t)=>s+t.nc,0);
+  const tomaTasa = pct(tomaNC, tomaCel), tomaProm = tomaCel / (toma.length||1);
+  const incluidos = new Set(toma.map(t=>t.op));
+  const mesesH = meses.filter(m => m >= mk(iniH));
+  const tomaMes = mesesH.map(m => {
+    const c = celH.filter(a => a.m===m && incluidos.has(a.op)).length;
+    const n = ncToma.filter(x => x.m===m && incluidos.has(x.op)).length;
+    return {m, c, n, tasa: pct(n,c)};
+  });
+  const tipoTot = CONFIG.tiposToma.map(([t]) => [t, toma.reduce((s,x)=>s+x.porTipo[t],0)]).sort((a,b)=>b[1]-a[1]);
+
+  // ---------- 3. agenda
+  const RESP = new Set(CONFIG.responsablesAgenda);
+  const ncAg = nc.filter(n => n.area === "agenda");
+  const ncAgR = ncAg.filter(n => RESP.has(n.op));
+  const fueraAg = {}; ncAg.filter(n => !RESP.has(n.op)).forEach(n => { const k = n.op || "sin operador"; fueraAg[k]=(fueraAg[k]||0)+1; });
+  const registradas = aud.filter(a => desdeH(a.f)).length;
+  const tiposAg = [...CONFIG.tiposAgenda];
+  const sinClas = ncAgR.filter(n => n.tipo === "Sin clasificar").length;
+  if (sinClas) { tiposAg.push(["Sin clasificar", "#d5d9e1"]); avisos.push(`${sinClas} no conformidades de agenda sin “Tipo de agenda”. Completá esa columna en el registro de hallazgos.`); }
+  const agenda = CONFIG.responsablesAgenda.map(op => {
+    const mis = ncAgR.filter(n => n.op === op);
+    return {op, nc: mis.length, porTipo: Object.fromEntries(tiposAg.map(([t]) => [t, mis.filter(n=>n.tipo===t).length]))};
+  }).filter(a => a.nc).sort((a,b) => b.nc - a.nc);
+  const top2 = agenda.slice(0,2), top2share = pct(top2.reduce((s,a)=>s+a.nc,0), ncAgR.length);
+
+  // ---------- 4. mesa de entrada
+  const ncMesa = nc.filter(n => n.area === "mesa");
+  const mesaMes = mesesH.map(m => ({m, n: ncMesa.filter(x=>x.m===m).length, c: celH.filter(a=>a.m===m).length}));
+
+  if (desconocidos.size) avisos.push(`Nombres de operador sin reconocer (se muestran tal cual): ${[...desconocidos].join(", ")}. Agregalos en CONFIG.operadores.`);
+
+  return {fin, ini, iniH, meses, lista, equipoMes, totalPeriodo, toma, tomaCel, tomaNC, tomaTasa, tomaProm, tomaMes, tipoTot,
+          agenda, ncAgR, registradas, top2, top2share, tiposAg, fueraAg, ncMesa, celHTotal: celH.length, mesaMes, avisos};
+}
+
+/* ===================================================================== */
+const mLabel = m => cap(MESES[m%12]);
+const mLargo = m => MESES_L[m%12];
+const dd = d => `${String(d.getDate()).padStart(2,"0")}/${String(d.getMonth()+1).padStart(2,"0")}/${d.getFullYear()}`;
+const nom = op => op.replace(/\s+\S+$/, "");  // "Nicolás M." -> "Nicolás"
+
+function heatColor(v, max) {
+  if (!v) return ["transparent", "var(--muted)"];
+  const t = 0.12 + 0.78 * (v / max);
+  const mix = (a,b) => Math.round(a + (b-a)*t);
+  return [`rgb(${mix(238,27)},${mix(241,42)},${mix(247,74)})`, t > 0.5 ? "#fff" : "var(--ink)"];
+}
+
+function svgScatter(D) {
+  const W = 760, H = 330, L = 54, R = 120, T = 14, B = 44;
+  const xs = D.toma.map(t=>t.cel), ys = D.toma.map(t=>t.tasa);
+  const x0 = Math.floor((Math.min(...xs)-8)/10)*10, x1 = Math.ceil((Math.max(...xs)+8)/10)*10;
+  const y1 = Math.max(4, Math.ceil((Math.max(...ys, D.tomaTasa)+1)/2)*2);
+  const X = v => L + (v-x0)/(x1-x0)*(W-L-R), Y = v => T + (1 - v/y1)*(H-T-B);
+  let s = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Audiencias celebradas frente a tasa de no conformidades">`;
+  for (let v = 0; v <= y1; v += 2) s += `<line x1="${L}" x2="${W-R+60}" y1="${Y(v)}" y2="${Y(v)}" stroke="#eceef2"/><text x="${L-8}" y="${Y(v)+4}" text-anchor="end" font-size="12" fill="#5b6475">${v}</text>`;
+  for (let v = x0; v <= x1; v += 10) s += `<line x1="${X(v)}" x2="${X(v)}" y1="${T}" y2="${H-B}" stroke="#f1f2f5"/><text x="${X(v)}" y="${H-B+18}" text-anchor="middle" font-size="12" fill="#5b6475">${v}</text>`;
+  s += `<line x1="${L}" x2="${W-R+60}" y1="${Y(D.tomaTasa)}" y2="${Y(D.tomaTasa)}" stroke="#b8892b" stroke-dasharray="5 4" stroke-width="1.4"/>`;
+  s += `<text x="${L+8}" y="${Y(D.tomaTasa)-6}" font-size="12" fill="#b8892b">Promedio equipo: ${fmt(D.tomaTasa,1)}</text>`;
+  s += `<line x1="${X(D.tomaProm)}" x2="${X(D.tomaProm)}" y1="${T}" y2="${H-B}" stroke="#b8892b" stroke-dasharray="5 4" stroke-width="1.4"/>`;
+  for (const t of D.toma) {
+    const c = t.tasa > D.tomaTasa ? "#b5532a" : "#1b2a4a";
+    s += `<circle cx="${X(t.cel)}" cy="${Y(t.tasa)}" r="6" fill="${c}"><title>${esc(t.op)}: ${t.nc} NC en ${t.cel} celebradas (${fmt(t.tasa,1)} c/100)</title></circle>`;
+    s += `<text x="${X(t.cel)+10}" y="${Y(t.tasa)+4}" font-size="12.5" font-weight="700" fill="#1f2633">${esc(nom(t.op))}</text>`;
+  }
+  s += `<text x="${(L+W-R)/2}" y="${H-6}" text-anchor="middle" font-size="12.5" fill="#5b6475">Audiencias celebradas desde el ${dd(D.iniH).slice(0,5)}</text>`;
+  s += `<text transform="translate(14 ${(T+H-B)/2}) rotate(-90)" text-anchor="middle" font-size="12.5" fill="#5b6475">No conformidades cada 100</text>`;
+  return s + "</svg>";
+}
+
+function svgStacked(rows, tipos, etiqueta, {labelW = 120, mostrarNum = false} = {}) {
+  const W = 760, rowH = 26, T = 6, B = 30, R = 210;
+  const H = T + rows.length*rowH + B;
+  const max = Math.max(1, ...rows.map(r => r.total));
+  const step = max > 12 ? 5 : max > 6 ? 2.5 : 1;
+  const xMax = Math.ceil((max*1.08)/step)*step;
+  const X = v => labelW + v/xMax*(W-labelW-R);
+  let s = `<svg viewBox="0 0 ${W} ${H}" role="img">`;
+  for (let v = 0; v <= xMax + 1e-9; v += step) s += `<line x1="${X(v)}" x2="${X(v)}" y1="${T}" y2="${H-B}" stroke="#eceef2"/><text x="${X(v)}" y="${H-B+16}" text-anchor="middle" font-size="11.5" fill="#5b6475">${fmt(v, step%1?1:0)}</text>`;
+  rows.forEach((r, i) => {
+    const y = T + i*rowH + 4, h = rowH - 9; let x = 0;
+    s += `<text x="${labelW-8}" y="${y+h/2+4}" text-anchor="end" font-size="12.5" fill="#1f2633">${esc(r.label)}</text>`;
+    for (const [t, c] of tipos) {
+      const v = r.porTipo[t] || 0; if (!v) continue;
+      s += `<rect x="${X(x)}" y="${y}" width="${X(x+v)-X(x)}" height="${h}" fill="${c}"><title>${esc(r.label)} · ${esc(t)}: ${v}</title></rect>`;
+      if (mostrarNum && X(x+v)-X(x) > 14) s += `<text x="${(X(x)+X(x+v))/2}" y="${y+h/2+4}" text-anchor="middle" font-size="11" font-weight="700" fill="${c==="#d5d9e1"?"#1f2633":"#fff"}">${v}</text>`;
+      x += v;
+    }
+    s += `<text x="${X(x)+8}" y="${y+h/2+4}" font-size="12" fill="#1f2633" ${mostrarNum?'font-weight="700"':''}>${esc(etiqueta(r))}</text>`;
+  });
+  s += `<text x="${(labelW+W-R)/2}" y="${H-2}" text-anchor="middle" font-size="12" fill="#5b6475">No conformidades</text>`;
+  return s + "</svg>";
+}
+
+function svgMesa(D) {
+  const W = 760, H = 260, L = 46, R = 10, T = 22, B = 46;
+  const n = D.mesaMes.length, max = Math.max(4, ...D.mesaMes.map(m=>m.n));
+  const yMax = Math.ceil((max+1)/2)*2;
+  const bw = (W-L-R)/n, Y = v => T + (1 - v/yMax)*(H-T-B);
+  let s = `<svg viewBox="0 0 ${W} ${H}" role="img">`;
+  for (let v = 0; v <= yMax; v += 2) s += `<line x1="${L}" x2="${W-R}" y1="${Y(v)}" y2="${Y(v)}" stroke="#eceef2"/><text x="${L-8}" y="${Y(v)+4}" text-anchor="end" font-size="12" fill="#5b6475">${v}</text>`;
+  D.mesaMes.forEach((m, i) => {
+    const cx = L + bw*i + bw/2, w = bw*0.55;
+    const c = m.n >= 4 ? "#b5532a" : "#1b2a4a";
+    if (m.n) s += `<rect x="${cx-w/2}" y="${Y(m.n)}" width="${w}" height="${Y(0)-Y(m.n)}" fill="${c}"/>`;
+    s += `<text x="${cx}" y="${Y(m.n)-6}" text-anchor="middle" font-size="13" font-weight="700" fill="#1b2a4a">${m.n}</text>`;
+    const parcial = i === 0 && D.iniH.getDate() > 1;
+    s += `<text x="${cx}" y="${H-B+16}" text-anchor="middle" font-size="12" fill="#5b6475">${mLabel(m.m)}${parcial?"*":""}</text>`;
+    s += `<text x="${cx}" y="${H-B+31}" text-anchor="middle" font-size="12" fill="#5b6475">${fmt(m.c)} aud.</text>`;
+  });
+  s += `<text transform="translate(12 ${(T+H-B)/2}) rotate(-90)" text-anchor="middle" font-size="12" fill="#5b6475">No conformidades</text>`;
+  return s + "</svg>";
+}
+
+const leyenda = tipos => `<div class="legend">${tipos.map(([t,c]) => `<span><i style="background:${c}"></i>${esc(t)}</span>`).join("")}</div>`;
+
+/* ===================================================================== */
+function lecturas(D) {
+  const L = [];
+  // Mayor volumen
+  const top = D.lista[0];
+  const porProm = [...D.lista].sort((a,b)=>b.prom-a.prom);
+  const seg = porProm.find(o => o.op !== top.op);
+  let t = `${top.op} encabeza el período con ${fmt(top.total)} celebradas (${fmt(top.prom,1)} por mes).`;
+  if (porProm[0].op !== top.op) t += ` ${porProm[0].op}${porProm[0].alta?`, que comenzó en ${mLargo(porProm[0].primero)},`:""} tiene el mejor promedio mensual (${fmt(porProm[0].prom,1)}).`;
+  else if (seg) t += ` ${seg.op}${seg.alta?`, que comenzó en ${mLargo(seg.primero)},`:""} tiene el segundo mejor promedio mensual (${fmt(seg.prom,1)}).`;
+  L.push(["Mayor volumen", t]);
+
+  // Toma
+  const mesesOk = D.tomaMes.filter(m => m.c >= 20);
+  const mejorMes = [...mesesOk].sort((a,b)=>a.tasa-b.tasa)[0];
+  L.push(["Toma de audiencia", `El equipo tuvo ${fmt(D.tomaNC)} no conformidades de audiencia sobre ${fmt(D.tomaCel)} celebradas: ${fmt(D.tomaTasa,1)} cada 100.` +
+    (mejorMes ? ` ${cap(mLargo(mejorMes.m))} fue el mejor mes del período (${fmt(mejorMes.tasa,1)} cada 100).` : "")]);
+
+  // Mejores registros
+  const asc = [...D.toma].sort((a,b)=>a.tasa-b.tasa);
+  if (asc.length) {
+    const b = asc[0], sig = asc.slice(1,4);
+    let s = `${b.op} tuvo ${b.nc === 1 ? "una sola no conformidad" : `${b.nc} no conformidades`} de audiencia en ${fmt(b.cel)} celebradas (${fmt(b.tasa,1)}).`;
+    if (sig.length) s += ` Le siguen ${yJoin(sig.map(x => `${x.op} (${fmt(x.tasa,1)})`))}.`;
+    const agBajo = D.toma.filter(x => CONFIG.responsablesAgenda.includes(x.op) && x.tasa < D.tomaTasa && D.agenda.some(a => a.op === x.op && a.nc >= 5));
+    if (agBajo.length) s += ` Separada la agenda, ${agBajo.map(x=>nom(x.op)).join(" y ")} ${agBajo.length>1?"quedan":"queda"} por debajo del promedio en sala.`;
+    L.push(["Mejores registros", s]);
+  }
+
+  // Focos
+  const focos = D.toma.filter(x => x.tasa > D.tomaTasa).slice(0,3);
+  if (focos.length) {
+    const dom = x => Object.entries(x.porTipo).sort((a,b)=>b[1]-a[1]);
+    const lower = s => s.charAt(0).toLowerCase() + s.slice(1);
+    const f0 = focos[0], d0 = dom(f0)[0];
+    let s = `${f0.op} tiene la tasa más alta (${fmt(f0.tasa,1)}) y ${d0[1]} de sus ${f0.nc} errores son de ${lower(d0[0])}.`;
+    focos.slice(1).forEach(f => {
+      const d = dom(f);
+      s += d[0][1] > d[1][1] ? ` ${f.op} (${fmt(f.tasa,1)}) concentra ${lower(d[0][0])} (${d[0][1]}).`
+                             : ` ${f.op} (${fmt(f.tasa,1)}) reparte entre ${lower(d[0][0])} y ${lower(d[1][0])}.`;
+    });
+    L.push(["Focos a trabajar", s]);
+  }
+
+  // Error más frecuente
+  const [tt, tn] = D.tipoTot[0] || ["", 0];
+  if (tn) L.push([tt, `Es el error más frecuente del equipo: ${tn} de las ${D.tomaNC} no conformidades de audiencia (${fmt(pct(tn,D.tomaNC))} %). Una revisión de ese procedimiento tendría el mayor impacto.`]);
+
+  // Agenda
+  if (D.ncAgR.length) {
+    const lower = s => s.charAt(0).toLowerCase() + s.slice(1);
+    let s = `${fmt(D.ncAgR.length)} no conformidades sobre ${fmt(D.registradas)} audiencias registradas (${fmt(pct(D.ncAgR.length,D.registradas),1)} cada 100).`;
+    if (D.top2.length === 2) s += ` ${D.top2[0].op} (${D.top2[0].nc}) y ${D.top2[1].op} (${D.top2[1].nc}) explican el ${fmt(D.top2share)} %.`;
+    D.top2.forEach(a => {
+      const d = Object.entries(a.porTipo).filter(([k])=>k!=="Sin clasificar").sort((x,y)=>y[1]-x[1]);
+      if (d[0] && d[0][1]) s += ` En ${nom(a.op)} predomina${d[1] && d[1][1] === d[0][1] ? "n" : ""} ${lower(d[0][0])}${d[1] && d[1][1] === d[0][1] ? ` y ${lower(d[1][0])}` : ""}.`;
+    });
+    L.push(["Agenda", s]);
+  }
+
+  // Mesa
+  const nm = D.ncMesa.length;
+  if (nm >= 0) {
+    let s = `${nm} no conformidades sobre ${fmt(D.celHTotal)} celebradas (${fmt(pct(nm,D.celHTotal),1)} cada 100).`;
+    const pico = [...D.mesaMes].sort((a,b)=>b.n-a.n)[0];
+    if (pico && pico.n) s += ` El mes con más casos fue ${mLargo(pico.m)} (${pico.n}).`;
+    const ult = D.mesaMes[D.mesaMes.length-1];
+    if (ult) s += ` En ${mLargo(ult.m)} hubo ${ult.n}.`;
+    L.push(["Mesa de entrada", s]);
+  }
+  return L;
+}
+
+/* ===================================================================== */
+function render(app, D) {
+  const hasta = D.meses[D.meses.length-1];
+  const periodo = `${cap(mLargo(D.meses[0]))} a ${mLargo(hasta)} de ${Math.floor(hasta/12)}`;
+  const maxHeat = Math.max(...D.lista.flatMap(o => D.meses.map(m => o.mes[m]||0)));
+  const ahora = new Date();
+  const fueraAg = Object.entries(D.fueraAg);
+
+  let h = `
+  <p class="eyebrow">Corte de Justicia de San Juan · Oficina de Gestión de Audiencias · Fuero Civil y Laboral</p>
+  <h1>Desempeño operativo de los operadores de sala</h1>
+  <p class="sub">Audiencias celebradas y no conformidades registradas · ${periodo.toLowerCase()}</p>
+  <p class="intro">Este informe resume el volumen de audiencias celebradas por cada operador y lo contrasta con las no conformidades del registro de hallazgos, separadas según su origen: toma de audiencia, agenda y mesa de entrada. Salvo el primer cuadro, el análisis parte del ${dd(D.iniH)}, fecha en que comenzó el registro de hallazgos.</p>
+  <div class="meta"><span>Datos al ${dd(D.fin)} · leídos de las planillas el ${dd(ahora)} a las ${ahora.toTimeString().slice(0,5)}</span><button onclick="cargar()">Actualizar</button></div>
+  ${D.avisos.length ? `<div class="warn"><b>Para revisar en las planillas</b><ul>${D.avisos.map(a=>`<li>${esc(a)}</li>`).join("")}</ul></div>` : ""}
+  <div class="kpis">
+    <div class="kpi"><b>${fmt(D.totalPeriodo)}</b><span>audiencias celebradas ${MESES[D.meses[0]%12]}–${MESES[hasta%12]}</span></div>
+    <div class="kpi"><b>${fmt(D.tomaCel)}</b><span>celebradas desde el ${dd(D.iniH).slice(0,5)}</span></div>
+    <div class="kpi"><b>${fmt(D.tomaTasa,1)}</b><span>NC de audiencia cada 100</span></div>
+    <div class="kpi"><b>${fmt(pct(D.ncMesa.length, D.celHTotal),1)}</b><span>NC de mesa de entrada cada 100</span></div>
+  </div>
+
+  <section>
+    <p class="since">${periodo}</p>
+    <h2>1. Audiencias celebradas por operador y mes</h2>
+    <p class="note">Celebrada + Cuarto Intermedio + Conciliada + Cont. de agravios. El color se intensifica con el volumen; ordenado por total del período.</p>
+    <div class="scroll"><table class="heat"><thead><tr><th>Operador</th>${D.meses.map(m=>`<th>${mLabel(m)}</th>`).join("")}<th>Total</th><th>Prom./mes</th></tr></thead><tbody>
+    ${D.lista.map(o => `<tr><td>${esc(o.op)}${o.baja ? ` <span style="color:var(--muted);font-size:12px">(hasta ${MESES[o.ultimo%12]})</span>` : ""}</td>${D.meses.map(m => {
+        const activo = m >= o.primero && m <= o.ultimo, v = o.mes[m]||0;
+        if (!activo) return `<td style="color:var(--muted)">—</td>`;
+        const [bg, fg] = heatColor(v, maxHeat); return `<td style="background:${bg};color:${fg}">${v}</td>`;
+      }).join("")}<td class="tot">${fmt(o.total)}</td><td>${fmt(o.prom,1)}</td></tr>`).join("")}
+    <tr class="team"><td>Equipo</td>${D.meses.map(m=>`<td>${fmt(D.equipoMes[m])}</td>`).join("")}<td>${fmt(D.totalPeriodo)}</td><td></td></tr>
+    </tbody></table></div>
+    <p class="note" style="margin-top:6px">— : fuera del período de actividad del operador. El promedio mensual considera solo los meses activos.</p>
+  </section>
+
+  <section class="pb">
+    <p class="since">Desde el ${dd(D.iniH)}</p>
+    <h2>2. Toma de audiencia: celebradas frente a no conformidades</h2>
+    <p class="note">Incluye las no conformidades vinculadas directamente a la audiencia: ${yJoin(CONFIG.tiposToma.map(t=>t[0].charAt(0).toLowerCase()+t[0].slice(1)))}.</p>
+    <h3>Volumen frente a errores</h3>
+    <p class="note">Cada punto es un operador. Las líneas punteadas marcan el promedio del equipo; abajo a la derecha está el mejor cuadrante (más audiencias, menos errores). En rojo, quienes superan la tasa promedio.</p>
+    <div class="chart">${svgScatter(D)}</div>
+    <h3>Detalle por operador y tipo de no conformidad</h3>
+    <p class="note">De mayor a menor tasa. A la derecha de cada barra: total de no conformidades, audiencias celebradas y tasa cada 100.</p>
+    <div class="chart">${svgStacked(D.toma.map(t=>({label:t.op,total:t.nc,porTipo:t.porTipo,...t})), CONFIG.tiposToma,
+        r => `${r.nc} NC · ${r.cel} aud. · ${fmt(r.tasa,1)} c/100`)}</div>
+    ${leyenda(CONFIG.tiposToma)}
+  </section>
+
+  <section class="pb">
+    <p class="since">Desde el ${dd(D.iniH)}</p>
+    <h2>3. Agenda</h2>
+    <p class="note">No conformidades de agenda de quienes realizan esa tarea. Se comparan con el total de audiencias registradas en el período (en cualquier estado), porque la agenda alcanza a todas, se celebren o no.</p>
+    <div class="kpis">
+      <div class="kpi"><b>${fmt(D.ncAgR.length)}</b><span>no conformidades de agenda</span></div>
+      <div class="kpi"><b>${fmt(D.registradas)}</b><span>audiencias registradas desde el ${dd(D.iniH).slice(0,5)}</span></div>
+      <div class="kpi"><b>${fmt(pct(D.ncAgR.length, D.registradas),1)}</b><span>cada 100 audiencias registradas</span></div>
+      <div class="kpi"><b>${fmt(D.top2share)} %</b><span>concentrado en ${D.top2.map(a=>esc(a.op)).join(" y ")}</span></div>
+    </div>
+    <h3>Por responsable y tipo de error</h3>
+    <p class="note">Según la columna “Tipo de agenda” del registro de hallazgos.</p>
+    <div class="chart">${svgStacked(D.agenda.map(a=>({label:a.op,total:a.nc,porTipo:a.porTipo,nc:a.nc})), D.tiposAg, r => String(r.nc), {mostrarNum:true})}</div>
+    ${leyenda(D.tiposAg)}
+  </section>
+
+  <section>
+    <p class="since">Desde el ${dd(D.iniH)}</p>
+    <h2>4. Mesa de entrada</h2>
+    <p class="note">No conformidades de mesa de entrada en relación con el total general de audiencias celebradas, sin asignarlas a un operador.</p>
+    <div class="kpis">
+      <div class="kpi"><b>${fmt(D.ncMesa.length)}</b><span>no conformidades de mesa de entrada</span></div>
+      <div class="kpi"><b>${fmt(D.celHTotal)}</b><span>audiencias celebradas desde el ${dd(D.iniH).slice(0,5)}</span></div>
+      <div class="kpi"><b>${fmt(pct(D.ncMesa.length, D.celHTotal),1)}</b><span>cada 100 celebradas</span></div>
+      <div class="kpi"><b>${D.ncMesa.length ? fmt(D.celHTotal/D.ncMesa.length) : "—"}</b><span>audiencias por cada no conformidad</span></div>
+    </div>
+    <h3>No conformidades por mes</h3>
+    <p class="note">Sobre cada barra, la cantidad de no conformidades; debajo, las audiencias celebradas en el mes. En rojo, los meses con 4 o más.${D.iniH.getDate()>1?` ${cap(mLargo(D.mesaMes[0].m))} cubre del ${D.iniH.getDate()} al ${new Date(D.iniH.getFullYear(), D.iniH.getMonth()+1, 0).getDate()}.`:""}</p>
+    <div class="chart">${svgMesa(D)}</div>
+  </section>
+
+  <section class="pb">
+    <h2>5. Lecturas principales</h2>
+    <p class="note">Generadas automáticamente a partir de los datos.</p>
+    <div class="cards">${lecturas(D).map(([t,p]) => `<div class="card"><h4>${esc(t)}</h4><p>${esc(p)}</p></div>`).join("")}</div>
+    <div class="method">
+      <p><b>Operadores analizados.</b> Se excluye de la toma de audiencias a ${yJoin(CONFIG.noTomanAudiencias).replace(/\.$/,"")}. Cada operador se promedia sobre los meses entre su primer y su último registro en el período${D.lista.some(o=>o.baja||o.alta)?` (${D.lista.filter(o=>o.baja||o.alta).map(o=>`${o.op}: ${MESES[o.primero%12]}–${MESES[o.ultimo%12]}`).join("; ")})`:""}. ${CONFIG.incluirMesEnCurso ? "Se incluye el mes en curso." : "No se incluye el mes en curso."}</p>
+      <p><b>No conformidades.</b> Solo se cuentan hallazgos de tipo “No conformidad”; observaciones y oportunidades de mejora quedan fuera. En toma de audiencia solo se cuentan ${yJoin(CONFIG.tiposToma.map(t=>t[0]))}; el resto de los hallazgos (Demoras AI, Error en descarga de acta en SUA, Nuevo hallazgo, Certificados) no se incluye.${fueraAg.length?` En agenda no se incluyen ${fueraAg.map(([k,v])=>`${v} de ${k}`).join(", ")} porque no ${fueraAg.length>1?"son responsables":"es responsable"} de esa tarea.`:""}</p>
+      <p><b>Denominadores.</b> Toma de audiencia y mesa de entrada: audiencias celebradas desde el ${dd(D.iniH)}. Agenda: total de audiencias registradas en ese período, en cualquier estado.</p>
+      <p><b>Fuentes.</b> Consolidado estadístico 2026 (hoja CONSOLIDADO) y registro de hallazgos de OGA, leídos en vivo; datos al ${dd(D.fin)}.</p>
+    </div>
+  </section>`;
+  app.innerHTML = h;
+}
+
+cargar();
+</script>
+</body>
+</html>
