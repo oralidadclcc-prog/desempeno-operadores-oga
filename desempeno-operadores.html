@@ -95,7 +95,7 @@ const CONFIG = {
   },
   inicioPeriodo: "2026-02-01",      // primer mes del cuadro 1
   inicioHallazgos: "2026-04-13",    // desde cuándo se registran hallazgos
-  incluirMesEnCurso: false,         // false = corta en el último mes completo
+  incluirMesEnCurso: true,          // true = muestra el mes en curso (marcado con *); no cuenta para promedios ni tendencias
   // Quiénes no se analizan en toma de audiencia
   noTomanAudiencias: ["Sabrina M.", "Adrián Q.", "Facundo Lu."],
   // Quiénes son responsables de la agenda
@@ -158,6 +158,15 @@ function operador(raw) {
   const k = norm(raw); if (!k) return "";
   if (ALIAS[k]) return ALIAS[k];
   desconocidos.add(String(raw).trim()); return String(raw).trim();
+}
+
+// Tipo de error de agenda deducido de la descripción del hallazgo (no requiere columna en la planilla)
+function tipoAgendaDesc(desc) {
+  const s = norm(desc);
+  if (/licen|\blic\b/.test(s)) return "Licencias";
+  if (/horario|\bhora|8:30|9hs|09:00|otro dia|disponibilidad/.test(s)) return "Horario y disponibilidad";
+  if (/calendario|\bsua\b|sheets|correo/.test(s)) return "Calendario vs. SUA";
+  return "Otros";
 }
 
 function parseFecha(v) {
@@ -265,6 +274,7 @@ function procesar(cRows, hRows) {
   const ini = parseFecha(CONFIG.inicioPeriodo), iniH = parseFecha(CONFIG.inicioHallazgos);
   const meses = []; for (let d = new Date(ini.getFullYear(), ini.getMonth(), 1); d <= fin; d.setMonth(d.getMonth()+1)) meses.push(d.getFullYear()*12 + d.getMonth());
   const mk = d => d.getFullYear()*12 + d.getMonth();
+  const enCurso = CONFIG.incluirMesEnCurso ? mk(hoy) : null;   // mes incompleto: se muestra, pero no entra en promedios ni tendencias
   const enPeriodo = d => d && d >= ini && d <= fin;
   const desdeH = d => d && d >= iniH && d <= fin;
 
@@ -285,9 +295,8 @@ function procesar(cRows, hRows) {
   // ---------- hallazgos
   const hH = hRows[0] || [];
   const jF = col(hH, "fecha deteccion", "fecha"), jT = col(hH, "tipo de hallazgo"), jH = col(hH, "hallazgo"),
-        jO = col(hH, "operador"), jA = col(hH, "tipo de agenda");
+        jO = col(hH, "operador"), jA = col(hH, "tipo de agenda"), jD = col(hH, "descripcion");
   if ([jF,jT,jH,jO].some(x => x < 0)) throw new Error("No encuentro las columnas del registro de hallazgos (Fecha detección, Tipo de hallazgo, Hallazgo, Operador).");
-  if (jA < 0) avisos.push("No encuentro la columna “Tipo de agenda” en el registro de hallazgos.");
   const TOMA = new Map(CONFIG.tiposToma.map(([t]) => [norm(t), t]));
   const TAG = new Map(CONFIG.tiposAgenda.map(([t]) => [norm(t), t]));
   const nc = [];
@@ -297,7 +306,7 @@ function procesar(cRows, hRows) {
     const h = norm(r[jH]);
     const area = TOMA.has(h) ? "toma" : h === "agenda" ? "agenda" : h === "mesa de entrada" ? "mesa" : null;
     if (!area) continue;
-    nc.push({f, m: mk(f), area, tipo: area === "toma" ? TOMA.get(h) : area === "agenda" ? (TAG.get(norm(jA >= 0 ? r[jA] : "")) || "Sin clasificar") : "", op: operador(r[jO])});
+    nc.push({f, m: mk(f), area, tipo: area === "toma" ? TOMA.get(h) : area === "agenda" ? (TAG.get(norm(jA >= 0 ? r[jA] : "")) || tipoAgendaDesc(jD >= 0 ? r[jD] : "")) : "", op: operador(r[jO])});
   }
 
   // ---------- 1. celebradas por operador y mes
@@ -314,8 +323,10 @@ function procesar(cRows, hRows) {
   const lista = Object.values(ops).map(o => {
     const act = [...(actividad[o.op]||[])].sort((a,b)=>a-b);
     o.primero = act[0]; o.ultimo = act[act.length-1];
+    if (enCurso != null && o.ultimo === enCurso - 1) o.ultimo = enCurso;   // activo el mes pasado: sigue activo en el mes en curso
     o.activos = meses.filter(m => m >= o.primero && m <= o.ultimo);
-    o.prom = o.total / o.activos.length;
+    const completos = o.activos.filter(m => m !== enCurso);
+    o.prom = completos.length ? completos.reduce((s,m)=>s+(o.mes[m]||0),0) / completos.length : o.total / o.activos.length;
     o.baja = o.ultimo < meses[meses.length-1];
     o.alta = o.primero > meses[0];
     return o;
@@ -350,9 +361,7 @@ function procesar(cRows, hRows) {
   const fueraAg = {}; ncAg.filter(n => !RESP.has(n.op)).forEach(n => { const k = n.op || "sin operador"; fueraAg[k]=(fueraAg[k]||0)+1; });
   const registradas = aud.filter(a => desdeH(a.f)).length;
   const tiposAg = [...CONFIG.tiposAgenda];
-  const sinClas = ncAgR.filter(n => n.tipo === "Sin clasificar").length;
-  if (sinClas) { tiposAg.push(["Sin clasificar", "#d5d9e1"]); avisos.push(`${sinClas} no conformidades de agenda sin “Tipo de agenda”. Completá esa columna en el registro de hallazgos.`); }
-  const agenda = CONFIG.responsablesAgenda.map(op => {
+    const agenda = CONFIG.responsablesAgenda.map(op => {
     const mis = ncAgR.filter(n => n.op === op);
     return {op, nc: mis.length, porTipo: Object.fromEntries(tiposAg.map(([t]) => [t, mis.filter(n=>n.tipo===t).length]))};
   }).filter(a => a.nc).sort((a,b) => b.nc - a.nc);
@@ -378,7 +387,7 @@ function procesar(cRows, hRows) {
   };
   const tendToma = toma.map(t => {
     const o = lista.find(x => x.op === t.op);
-    const serie = mesesH.filter(m => m >= o.primero && m <= o.ultimo).map(m => ({
+    const serie = mesesH.filter(m => m >= o.primero && m <= o.ultimo && m !== enCurso).map(m => ({
       m, c: celH.filter(a => a.m===m && a.op===t.op).length, n: ncToma.filter(x => x.m===m && x.op===t.op).length }));
     serie.forEach(x => x.t = x.c ? pct(x.n, x.c) : null);
     const w = ventana(serie, tasaDe);
@@ -388,23 +397,24 @@ function procesar(cRows, hRows) {
   });
   const ordenEst = {"Empeora":0, "Estable":1, "Mejora":2, "Pocos datos":3};
   tendToma.sort((a,b) => ordenEst[a.estado]-ordenEst[b.estado] || b.delta - a.delta);
-  const wEq = ventana(tomaMes, tasaDe);
-  const tendEquipo = {serie: tomaMes.map(x => ({...x, t: x.c ? x.tasa : null})), w: wEq, delta: wEq ? wEq.vRec.t - wEq.vAnt.t : 0};
+  const tomaMesC = tomaMes.filter(x => x.m !== enCurso);
+  const wEq = ventana(tomaMesC, tasaDe);
+  const tendEquipo = {serie: tomaMesC.map(x => ({...x, t: x.c ? x.tasa : null})), w: wEq, delta: wEq ? wEq.vRec.t - wEq.vAnt.t : 0};
   tendEquipo.estado = clasificar(tendEquipo.delta, T.umbralTasaEquipo, !!wEq);
 
   const tendAgenda = CONFIG.responsablesAgenda.map(op => {
-    const serie = mesesH.map(m => ({m, n: ncAgR.filter(x => x.m===m && x.op===op).length}));
+    const serie = mesesH.filter(m => m !== enCurso).map(m => ({m, n: ncAgR.filter(x => x.m===m && x.op===op).length}));
     const w = ventana(serie, s => s.reduce((a,x)=>a+x.n,0) / s.length);
     const delta = w ? w.vRec - w.vAnt : 0;
     return {op, serie, w, delta, total: serie.reduce((a,x)=>a+x.n,0), estado: clasificar(delta, T.umbralAgenda, !!w)};
   }).filter(a => a.total);
-  const agendaMesTot = mesesH.map(m => ({m, n: ncAgR.filter(x=>x.m===m).length, reg: aud.filter(a=>a.m===m && desdeH(a.f)).length}));
+  const agendaMesTot = mesesH.filter(m => m !== enCurso).map(m => ({m, n: ncAgR.filter(x=>x.m===m).length, reg: aud.filter(a=>a.m===m && desdeH(a.f)).length}));
 
   if (desconocidos.size) avisos.push(`Nombres de operador sin reconocer (se muestran tal cual): ${[...desconocidos].join(", ")}. Agregalos en CONFIG.operadores.`);
 
   return {fin, ini, iniH, meses, lista, equipoMes, totalPeriodo, toma, tomaCel, tomaNC, tomaTasa, tomaProm, tomaMes, tipoTot,
           agenda, ncAgR, registradas, top2, top2share, tiposAg, fueraAg, ncMesa, celHTotal: celH.length, mesaMes, avisos,
-          tendToma, tendEquipo, tendAgenda, agendaMesTot, mesesH};
+          tendToma, tendEquipo, tendAgenda, agendaMesTot, mesesH, enCurso, mesesHC: mesesH.filter(m => m !== enCurso)};
 }
 
 /* ===================================================================== */
@@ -478,7 +488,7 @@ function svgMesa(D) {
     const c = m.n >= 4 ? "#b5532a" : "#1b2a4a";
     if (m.n) s += `<rect x="${cx-w/2}" y="${Y(m.n)}" width="${w}" height="${Y(0)-Y(m.n)}" fill="${c}"/>`;
     s += `<text x="${cx}" y="${Y(m.n)-6}" text-anchor="middle" font-size="13" font-weight="700" fill="#1b2a4a">${m.n}</text>`;
-    const parcial = i === 0 && D.iniH.getDate() > 1;
+    const parcial = (i === 0 && D.iniH.getDate() > 1) || m.m === D.enCurso;
     s += `<text x="${cx}" y="${H-B+16}" text-anchor="middle" font-size="12" fill="#5b6475">${mLabel(m.m)}${parcial?"*":""}</text>`;
     s += `<text x="${cx}" y="${H-B+31}" text-anchor="middle" font-size="12" fill="#5b6475">${fmt(m.c)} aud.</text>`;
   });
@@ -540,14 +550,14 @@ function seccionTendencia(D) {
     <div class="spark-grid">
       <div class="spark team">
         <div class="spark-h"><b>Equipo</b>${chip(eq.estado)}</div>
-        ${svgSpark(eq.serie, null, D.mesesH, yMax, eq.w && eq.w.k, "#b8892b")}
+        ${svgSpark(eq.serie, null, D.mesesHC, yMax, eq.w && eq.w.k, "#b8892b")}
         <div class="spark-f">${pie(eq)}</div>
       </div>
       ${D.tendToma.map(t => {
         const o = D.lista.find(x => x.op === t.op);
         return `<div class="spark">
         <div class="spark-h"><b>${esc(t.op)}${o && o.baja ? ` <span style="font-weight:400;color:var(--muted);font-size:11.5px">(hasta ${MESES[o.ultimo%12]})</span>` : ""}</b>${chip(t.estado)}</div>
-        ${svgSpark(t.serie, eq.serie, D.mesesH, yMax, t.w && t.w.k, colorDe(t.estado))}
+        ${svgSpark(t.serie, eq.serie, D.mesesHC, yMax, t.w && t.w.k, colorDe(t.estado))}
         <div class="spark-f">${pie(t)}</div>
       </div>`; }).join("")}
     </div>
@@ -556,7 +566,7 @@ function seccionTendencia(D) {
 
     <h3>Agenda: no conformidades por mes</h3>
     <p class="note">Cantidad mensual por responsable. La tendencia compara el promedio mensual de los últimos ${T.mesesComparados} meses con el de los ${T.mesesComparados} anteriores (diferencia de ${fmt(T.umbralAgenda)} o más por mes).</p>
-    <div class="scroll"><table class="trend"><thead><tr><th>Responsable</th>${D.mesesH.map(m=>`<th>${mLabel(m)}${m===D.mesesH[0]&&D.iniH.getDate()>1?"*":""}</th>`).join("")}<th>Tendencia</th></tr></thead><tbody>
+    <div class="scroll"><table class="trend"><thead><tr><th>Responsable</th>${D.mesesHC.map(m=>`<th>${mLabel(m)}${m===D.mesesHC[0]&&D.iniH.getDate()>1?"*":""}</th>`).join("")}<th>Tendencia</th></tr></thead><tbody>
       ${D.tendAgenda.map(a => `<tr><td>${esc(a.op)}</td>${a.serie.map(x => `<td>${x.n || '<span style="color:var(--muted)">0</span>'}</td>`).join("")}<td>${chip(a.estado)}</td></tr>`).join("")}
       <tr class="team"><td>Total agenda</td>${D.agendaMesTot.map(x=>`<td>${x.n}</td>`).join("")}<td></td></tr>
       <tr class="sub"><td>cada 100 registradas</td>${D.agendaMesTot.map(x=>`<td>${fmt(pct(x.n,x.reg),1)}</td>`).join("")}<td></td></tr>
@@ -580,7 +590,7 @@ function lecturas(D) {
   L.push(["Mayor volumen", t]);
 
   // Toma
-  const mesesOk = D.tomaMes.filter(m => m.c >= 20);
+  const mesesOk = D.tomaMes.filter(m => m.c >= 20 && m.m !== D.enCurso);
   const mejorMes = [...mesesOk].sort((a,b)=>a.tasa-b.tasa)[0];
   L.push(["Toma de audiencia", `El equipo tuvo ${fmt(D.tomaNC)} no conformidades de audiencia sobre ${fmt(D.tomaCel)} celebradas: ${fmt(D.tomaTasa,1)} cada 100.` +
     (mejorMes ? ` ${cap(mLargo(mejorMes.m))} fue el mejor mes del período (${fmt(mejorMes.tasa,1)} cada 100).` : "")]);
@@ -634,7 +644,7 @@ function lecturas(D) {
     const pico = [...D.mesaMes].sort((a,b)=>b.n-a.n)[0];
     if (pico && pico.n) s += ` El mes con más casos fue ${mLargo(pico.m)} (${pico.n}).`;
     const ult = D.mesaMes[D.mesaMes.length-1];
-    if (ult) s += ` En ${mLargo(ult.m)} hubo ${ult.n}.`;
+    if (ult) s += ` En ${mLargo(ult.m)}${ult.m === D.enCurso ? " (en curso)" : ""} hubo ${ult.n}.`;
     L.push(["Mesa de entrada", s]);
   }
 
@@ -676,7 +686,7 @@ function render(app, D) {
     <p class="since">${periodo}</p>
     <h2>1. Audiencias celebradas por operador y mes</h2>
     <p class="note">Celebrada + Cuarto Intermedio + Conciliada + Cont. de agravios. El color se intensifica con el volumen; ordenado por total del período.</p>
-    <div class="scroll"><table class="heat"><thead><tr><th>Operador</th>${D.meses.map(m=>`<th>${mLabel(m)}</th>`).join("")}<th>Total</th><th>Prom./mes</th></tr></thead><tbody>
+    <div class="scroll"><table class="heat"><thead><tr><th>Operador</th>${D.meses.map(m=>`<th>${mLabel(m)}${m===D.enCurso?"*":""}</th>`).join("")}<th>Total</th><th>Prom./mes</th></tr></thead><tbody>
     ${D.lista.map(o => `<tr><td>${esc(o.op)}${o.baja ? ` <span style="color:var(--muted);font-size:12px">(hasta ${MESES[o.ultimo%12]})</span>` : ""}</td>${D.meses.map(m => {
         const activo = m >= o.primero && m <= o.ultimo, v = o.mes[m]||0;
         if (!activo) return `<td style="color:var(--muted)">—</td>`;
@@ -684,7 +694,7 @@ function render(app, D) {
       }).join("")}<td class="tot">${fmt(o.total)}</td><td>${fmt(o.prom,1)}</td></tr>`).join("")}
     <tr class="team"><td>Equipo</td>${D.meses.map(m=>`<td>${fmt(D.equipoMes[m])}</td>`).join("")}<td>${fmt(D.totalPeriodo)}</td><td></td></tr>
     </tbody></table></div>
-    <p class="note" style="margin-top:6px">— : fuera del período de actividad del operador. El promedio mensual considera solo los meses activos.</p>
+    <p class="note" style="margin-top:6px">— : fuera del período de actividad del operador. El promedio mensual considera solo los meses activos y completos${D.enCurso!=null?"; * mes en curso":""}.</p>
   </section>
 
   <section class="pb">
@@ -712,7 +722,7 @@ function render(app, D) {
       <div class="kpi"><b>${fmt(D.top2share)} %</b><span>concentrado en ${D.top2.map(a=>esc(a.op)).join(" y ")}</span></div>
     </div>
     <h3>Por responsable y tipo de error</h3>
-    <p class="note">Según la columna “Tipo de agenda” del registro de hallazgos.</p>
+    <p class="note">Tipos deducidos automáticamente de la descripción de cada hallazgo.</p>
     <div class="chart">${svgStacked(D.agenda.map(a=>({label:a.op,total:a.nc,porTipo:a.porTipo,nc:a.nc})), D.tiposAg, r => String(r.nc), {mostrarNum:true})}</div>
     ${leyenda(D.tiposAg)}
   </section>
